@@ -34,9 +34,17 @@ class HackerNewsScraper:
             response = requests.get(link, timeout=1)
             if response.ok:
                 return BeautifulSoup(response.text, "html.parser")
+            else:
+                if not response.ok:
+                    logger.error(
+                        f"Request failed with status code {response.status_code} for {link}"
+                    )
+                    return None
             return BeautifulSoup()
         except requests.exceptions.Timeout:
-            logger.info("Request timed out for %s, skipping this page..", link, exc_info=True)
+            logger.info(
+                "Request timed out for %s, skipping this page..", link, exc_info=True
+            )
             return BeautifulSoup()
         except requests.exceptions.ConnectionError as err:
             logger.info(
@@ -57,6 +65,7 @@ class HackerNewsScraper:
 
     def scrape(self) -> None:
         """This methos scrapes the pages and creates soup for all pages"""
+        logger: Logger = getLogger(__name__)
         if self.pages_to_scrape < 1:
             return
 
@@ -64,9 +73,12 @@ class HackerNewsScraper:
         self.page_soups.append(home_page_soup)
 
         for i in range(self.pages_to_scrape - 1):
-            next_page_link = self.page_soups[i].find("a", class_="blog-pager-older-link-mobile")[
-                "href"
-            ]
+            next_page_link = self.page_soups[i].find(
+                "a", class_="blog-pager-older-link-mobile"
+            )["href"]
+            if not next_page_link:
+                logger.warning("No 'Older Posts' link found")
+                break
             self.page_soups.append(HackerNewsScraper.link_to_soup(next_page_link))
 
     def extract(self) -> None:
@@ -78,15 +90,26 @@ class HackerNewsScraper:
             posts_in_page = page.find_all("a", class_="story-link")
             for post in posts_in_page:
                 self.posts_url_title_data.append(
-                    {"url": post["href"], "title": post.find("h2", class_="home-title").text}
+                    {
+                        "url": post["href"],
+                        "title": post.find("h2", class_="home-title").text,
+                    }
                 )
 
                 self.posts_url_others_data.append(
                     {
                         "url": post["href"],
-                        "desc": post.find("div", class_="home-desc").text,
-                        "author": post.find("span").text[1: len(post.find("span").text) - 1],
-                        "imgSrc": post.find("img")["data-src"],
+                        "desc": post.find("div", class_="home-desc").get_text(
+                            strip=True
+                        )
+                        if post.find("div", class_="home-desc")
+                        else "No Description",
+                        "author": post.find("span").get_text(strip=True)[1:-1]
+                        if post.find("span") and post.find("span").text
+                        else "Unknown",
+                        "imgSrc": post.find("img")["data-src"]
+                        if post.find("img") and post.find("img").has_attr("data-src")
+                        else "No Image",
                     }
                 )
 
@@ -129,10 +152,10 @@ class HackerNewsScraper:
         def mysqlconnect():
             # To connect MySQL database
             conn = pymysql.connect(
-                host='localhost',
-                user='root',
+                host="localhost",
+                user="root",
                 password="Password1!",
-                db='scraper',
+                db="scraper",
             )
             return conn
 
@@ -164,9 +187,22 @@ class HackerNewsScraper:
         conn_cursor.execute(sql_create_urlTitle_table)
         conn_cursor.execute(sql_create_urlOtherInfo_table)
 
-        sql_insert_urlTitle = "insert into urltitle(url_link, url_title) values (%s, %s)"
+        sql_insert_urlTitle = (
+            "insert into urltitle(url_link, url_title) values (%s, %s)"
+        )
         sql_insert_urlOtherInfo = "insert into urlotherinfo(url_link, url_description, author, imgSrc) values (%s, %s, %s, %s)"
-        for url_title, url_other in zip(self.posts_url_title_data, self.posts_url_others_data):
-            conn_cursor.execute(sql_insert_urlTitle, (url_title["url"], url_title["title"]))
-            conn_cursor.execute(sql_insert_urlOtherInfo,
-                                (url_other["url"], url_other["desc"], url_other["author"], url_other["imgSrc"]))
+        for url_title, url_other in zip(
+            self.posts_url_title_data, self.posts_url_others_data
+        ):
+            conn_cursor.execute(
+                sql_insert_urlTitle, (url_title["url"], url_title["title"])
+            )
+            conn_cursor.execute(
+                sql_insert_urlOtherInfo,
+                (
+                    url_other["url"],
+                    url_other["desc"],
+                    url_other["author"],
+                    url_other["imgSrc"],
+                ),
+            )
